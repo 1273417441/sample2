@@ -1,0 +1,516 @@
+cat > /mnt/user-data/outputs/net_counter2.html << 'HTMLEOF'
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>網段数カウンター v2</title>
+<style>
+  :root{
+    --bg:#0a0f0a;--panel:#111a11;--border:#1e3a1e;
+    --green:#00e676;--amber:#ffab00;--red:#ff1744;
+    --text:#c8e6c9;--text-dim:#558b5e;--green-dark:#004d20;
+    --font:'Courier New',monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:var(--font);
+    height:100dvh;display:flex;flex-direction:column;overflow:hidden;
+    user-select:none;-webkit-user-select:none}
+  #header{display:flex;align-items:center;justify-content:space-between;
+    padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--border);
+    flex-shrink:0;gap:8px}
+  #header h1{font-size:13px;letter-spacing:.15em;color:var(--green);
+    text-transform:uppercase;white-space:nowrap}
+  .sdot{width:8px;height:8px;border-radius:50%;background:var(--text-dim);
+    flex-shrink:0;transition:background .2s}
+  .sdot.on{background:var(--green);box-shadow:0 0 6px var(--green);animation:blink 1.5s infinite}
+  .sdot.lock{background:var(--amber);box-shadow:0 0 6px var(--amber)}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
+
+  #cam{position:relative;flex:1;overflow:hidden;background:#000}
+  #video{width:100%;height:100%;object-fit:cover;display:block}
+  #ov{position:absolute;inset:0;pointer-events:none}
+  #gcv{position:absolute;right:0;top:0;bottom:0;width:64px;opacity:.9}
+
+  /* 上部バー */
+  #topbar{position:absolute;top:0;left:0;right:64px;height:5px;background:rgba(0,0,0,.4)}
+  #topbar-inner{height:100%;width:0%;background:var(--green);transition:width .05s}
+
+  /* 監視ライン */
+  #wl{position:absolute;left:0;right:64px;height:2px;top:50%;
+    transform:translateY(-50%);pointer-events:none}
+  .wl-bar{position:absolute;inset:0;background:var(--green);opacity:.9;
+    box-shadow:0 0 8px var(--green);transition:all .1s}
+  .wl-bar.hit{background:var(--amber);box-shadow:0 0 20px var(--amber),0 0 40px var(--amber)}
+  .wl-lbl{position:absolute;right:8px;top:4px;font-size:10px;
+    color:var(--green);letter-spacing:.1em}
+
+  #flash{position:absolute;inset:0;background:rgba(0,230,118,.18);
+    opacity:0;pointer-events:none;transition:opacity .05s}
+  #lock-ind{position:absolute;left:8px;top:50%;transform:translateY(-50%);
+    font-size:10px;color:var(--amber);letter-spacing:.1em;opacity:0;
+    background:rgba(0,0,0,.6);padding:2px 6px;border-radius:3px;transition:opacity .2s}
+  #lock-ind.show{opacity:1}
+
+  #bottom{background:var(--panel);border-top:1px solid var(--border);flex-shrink:0}
+  #count-row{display:flex;align-items:center;justify-content:center;
+    padding:8px 14px 4px;gap:16px}
+  #cnt{font-size:64px;font-weight:700;color:var(--green);letter-spacing:-2px;
+    line-height:1;text-shadow:0 0 20px rgba(0,230,118,.4);
+    transition:color .1s;min-width:3ch;text-align:center}
+  #cnt.bump{color:#fff;text-shadow:0 0 30px rgba(0,230,118,.8)}
+  .clbl{font-size:11px;color:var(--text-dim);letter-spacing:.12em;
+    text-transform:uppercase;line-height:1.4}
+  #mrow{display:flex;padding:4px 14px 6px;gap:6px}
+  .mc{flex:1;background:var(--green-dark);border:1px solid var(--border);
+    border-radius:4px;padding:5px 8px;text-align:center}
+  .mv{font-size:15px;color:var(--text);line-height:1}
+  .ml{font-size:9px;color:var(--text-dim);letter-spacing:.1em;
+    text-transform:uppercase;margin-top:2px}
+  #brow{display:flex;gap:8px;padding:0 14px 8px}
+  .btn{flex:1;padding:9px 4px;border:1px solid var(--border);border-radius:6px;
+    background:transparent;color:var(--text-dim);font-family:var(--font);
+    font-size:11px;letter-spacing:.12em;text-transform:uppercase;cursor:pointer;
+    -webkit-tap-highlight-color:transparent;transition:all .15s}
+  .btn:active{transform:scale(.96)}
+  .btn.pri{border-color:var(--green);color:var(--green);background:rgba(0,230,118,.07)}
+  .btn.danger{border-color:var(--red);color:var(--red)}
+  .btn.on{border-color:var(--green);color:var(--green)}
+  #ppanel{padding:0 14px 8px;display:none;flex-direction:column;gap:5px}
+  #ppanel.open{display:flex}
+  .pr{display:flex;align-items:center;gap:8px}
+  .pl{font-size:10px;color:var(--text-dim);letter-spacing:.1em;
+    width:130px;flex-shrink:0;text-transform:uppercase}
+  input[type=range]{flex:1;accent-color:var(--green);height:3px}
+  .pv{font-size:12px;color:var(--green);width:38px;text-align:right}
+</style>
+</head>
+<body>
+
+<div id="header">
+  <div class="sdot" id="sdot"></div>
+  <h1>網段数 v2 / 穴検出</h1>
+  <div style="display:flex;gap:8px;align-items:center">
+    <span style="font-size:11px;color:var(--text-dim)" id="fps-lbl">--fps</span>
+    <button class="btn" id="btn-adj"
+      style="flex:none;padding:4px 10px;font-size:10px">⚙ 調整</button>
+  </div>
+</div>
+
+<div id="cam">
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="ov" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+  <canvas id="gcv"></canvas>
+  <div id="topbar"><div id="topbar-inner"></div></div>
+  <div id="wl">
+    <div class="wl-bar" id="wl-bar"></div>
+    <div class="wl-lbl">WATCH LINE</div>
+  </div>
+  <div id="flash"></div>
+  <div id="lock-ind">■ LOCKED</div>
+</div>
+
+<div id="bottom">
+  <div id="ppanel">
+    <div class="pr">
+      <span class="pl">緑H下限</span>
+      <input type="range" id="p-hmin" min="60" max="130" value="90">
+      <span class="pv" id="v-hmin">90</span>
+    </div>
+    <div class="pr">
+      <span class="pl">緑H上限</span>
+      <input type="range" id="p-hmax" min="140" max="200" value="170">
+      <span class="pv" id="v-hmax">170</span>
+    </div>
+    <div class="pr">
+      <span class="pl">彩度下限</span>
+      <input type="range" id="p-smin" min="5" max="60" value="25">
+      <span class="pv" id="v-smin">25</span>
+    </div>
+    <div class="pr">
+      <span class="pl">穴 最小px</span>
+      <input type="range" id="p-amin" min="2" max="30" value="6">
+      <span class="pv" id="v-amin">6</span>
+    </div>
+    <div class="pr">
+      <span class="pl">Yクラスタ幅</span>
+      <input type="range" id="p-gap" min="3" max="30" value="12">
+      <span class="pv" id="v-gap">12</span>
+    </div>
+    <div class="pr">
+      <span class="pl">トリガー穴数</span>
+      <input type="range" id="p-trig" min="1" max="15" value="3">
+      <span class="pv" id="v-trig">3</span>
+    </div>
+    <div class="pr">
+      <span class="pl">UNLOCK穴数</span>
+      <input type="range" id="p-unlk" min="0" max="10" value="1">
+      <span class="pv" id="v-unlk">1</span>
+    </div>
+  </div>
+
+  <div id="count-row">
+    <div>
+      <div class="clbl">段数</div>
+      <div class="clbl" style="color:var(--text-dim);font-size:9px">ROWS</div>
+    </div>
+    <div id="cnt">0</div>
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <button class="btn danger" id="btn-rst" style="padding:6px 12px">RESET</button>
+      <button class="btn" id="btn-m1" style="padding:6px 12px">-1</button>
+    </div>
+  </div>
+
+  <div id="mrow">
+    <div class="mc"><div class="mv" id="m-holes">0</div><div class="ml">WL穴数</div></div>
+    <div class="mc"><div class="mv" id="m-rows">0</div><div class="ml">検出段</div></div>
+    <div class="mc"><div class="mv" id="m-state">WAIT</div><div class="ml">状態</div></div>
+    <div class="mc"><div class="mv" id="m-intv">--</div><div class="ml">間隔(s)</div></div>
+  </div>
+
+  <div id="brow">
+    <button class="btn pri" id="btn-start">▶ カメラ開始</button>
+    <button class="btn" id="btn-vis">穴表示</button>
+  </div>
+</div>
+
+<script>
+// ── パラメータ ──
+const P = {
+  hMin:90, hMax:170, sMin:25,
+  aMin:6,
+  clustGap:12,
+  trigHoles:3,
+  unlockHoles:1,
+};
+
+const S = {
+  running:false, count:0,
+  phase:'WAIT',
+  lastCountTime:0,
+  showVis:false,
+  fc:0, fpsT:0,
+};
+
+const GHIST = 120;
+const gHist = new Float32Array(GHIST);
+let gIdx = 0;
+
+const video    = document.getElementById('video');
+const ovEl     = document.getElementById('ov');
+const octx     = ovEl.getContext('2d');
+const gcv      = document.getElementById('gcv');
+const gctx     = gcv.getContext('2d');
+const wlBar    = document.getElementById('wl-bar');
+const flashEl  = document.getElementById('flash');
+const lockInd  = document.getElementById('lock-ind');
+const sdot     = document.getElementById('sdot');
+const cntEl    = document.getElementById('cnt');
+const fpsLbl   = document.getElementById('fps-lbl');
+const topbarIn = document.getElementById('topbar-inner');
+const mHoles   = document.getElementById('m-holes');
+const mRows    = document.getElementById('m-rows');
+const mState   = document.getElementById('m-state');
+const mIntv    = document.getElementById('m-intv');
+
+const proc = document.createElement('canvas');
+const pctx = proc.getContext('2d', {willReadFrequently:true});
+
+// ── カメラ ──
+let started = false;
+document.getElementById('btn-start').addEventListener('click', async () => {
+  if (started) return; started = true;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}}
+    });
+    video.srcObject = stream; await video.play();
+    S.running = true; sdot.className = 'sdot on';
+    document.getElementById('btn-start').textContent = '■ 停止';
+    document.getElementById('btn-start').classList.remove('pri');
+    requestAnimationFrame(loop);
+  } catch(e) { alert('カメラエラー: '+e.message); started = false; }
+});
+
+// ── メインループ ──
+function loop(ts) {
+  if (!S.running) return;
+  requestAnimationFrame(loop);
+
+  S.fc++;
+  if (ts - S.fpsT > 1000) {
+    fpsLbl.textContent = S.fc + 'fps';
+    S.fc = 0; S.fpsT = ts;
+  }
+  if (video.readyState < 2) return;
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return;
+
+  const dw = video.clientWidth, dh = video.clientHeight;
+  if (ovEl.width !== dw || ovEl.height !== dh) {
+    ovEl.width = dw; ovEl.height = dh;
+    gcv.width = 64; gcv.height = dh;
+  }
+
+  // 処理解像度 240px幅（160より穴が潰れにくい）
+  const PW = 240, PH = Math.round(vh / vw * PW);
+  proc.width = PW; proc.height = PH;
+  pctx.drawImage(video, 0, 0, PW, PH);
+  const d = pctx.getImageData(0, 0, PW, PH).data;
+
+  // ── ① HSV → 緑マスク ──
+  const green = new Uint8Array(PW * PH);
+  for (let i = 0; i < PW * PH; i++) {
+    const b4 = i * 4;
+    const r = d[b4]/255, g = d[b4+1]/255, bl = d[b4+2]/255;
+    const mx = Math.max(r,g,bl), mn = Math.min(r,g,bl), delta = mx - mn;
+    if (delta < 0.01 || mx < 0.2) continue;
+    let h = 0;
+    if      (mx === g)  h = 60*(( bl-r)/delta) + 120;
+    else if (mx === r)  h = (60*((g-bl)/delta) + 360) % 360;
+    else                h = 60*((r-g )/delta) + 240;
+    if (h >= P.hMin && h <= P.hMax && delta/mx > P.sMin/100) green[i] = 1;
+  }
+
+  // ── ② 連結成分解析（Union-Find） ──
+  const parent = new Int32Array(PW * PH);
+  for (let i = 0; i < PW*PH; i++) parent[i] = i;
+  function find(x) {
+    while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+    return x;
+  }
+  function union(a, b) {
+    a = find(a); b = find(b); if (a !== b) parent[a] = b;
+  }
+  const lbl = new Int32Array(PW * PH);
+  let lid = 1;
+  for (let y = 0; y < PH; y++) {
+    for (let x = 0; x < PW; x++) {
+      const i = y*PW+x;
+      if (!green[i]) continue;
+      const n0 = y>0        ? y*PW+x-PW   : -1;
+      const n1 = x>0        ? y*PW+x-1    : -1;
+      const n2 = y>0&&x>0   ? y*PW+x-PW-1 : -1;
+      const n3 = y>0&&x<PW-1? y*PW+x-PW+1 : -1;
+      const nbrs = [n0,n1,n2,n3].filter(n=>n>=0&&lbl[n]>0);
+      if (!nbrs.length) { lbl[i] = lid++; }
+      else {
+        lbl[i] = lbl[nbrs[0]];
+        for (let k=1;k<nbrs.length;k++) union(lbl[nbrs[0]], lbl[nbrs[k]]);
+      }
+    }
+  }
+
+  // 成分ごとに重心集計
+  const cntMap  = new Map();
+  const sumY    = new Map();
+  const sumX    = new Map();
+  for (let y = 0; y < PH; y++) {
+    for (let x = 0; x < PW; x++) {
+      const i = y*PW+x;
+      if (!lbl[i]) continue;
+      const root = find(lbl[i]);
+      cntMap.set(root, (cntMap.get(root)||0) + 1);
+      sumY  .set(root, (sumY  .get(root)||0) + y);
+      sumX  .set(root, (sumX  .get(root)||0) + x);
+    }
+  }
+
+  // ── ③ 重心計算・サイズフィルタ ──
+  const sizes = [...cntMap.values()].sort((a,b)=>b-a);
+  const med   = sizes[Math.min(9, sizes.length-1)] || 1;
+  const aMin  = Math.max(P.aMin, Math.floor(med * 0.08));
+  const aMax  = Math.min(5000,   Math.ceil (med * 12));
+
+  const centroids = [];
+  for (const [root, n] of cntMap) {
+    if (n < aMin || n > aMax) continue;
+    centroids.push({
+      cy: sumY.get(root)/n,
+      cx: sumX.get(root)/n,
+      area: n,
+    });
+  }
+
+  // ── ④⑤ Yクラスタリング ──
+  centroids.sort((a,b) => a.cy - b.cy);
+  const clusters = [];
+  if (centroids.length) {
+    let cur = [0];
+    for (let i = 1; i < centroids.length; i++) {
+      if (centroids[i].cy - centroids[cur[cur.length-1]].cy <= P.clustGap)
+        cur.push(i);
+      else { clusters.push(cur); cur = [i]; }
+    }
+    clusters.push(cur);
+  }
+  const rowCenters = clusters.map(c => {
+    const s = c.reduce((acc,i) => acc + centroids[i].cy, 0);
+    return s / c.length;
+  });
+  // 各重心にrow番号を付与
+  centroids.forEach(c => {
+    let best = 0, bd = 9999;
+    rowCenters.forEach((rc,ri) => { const d=Math.abs(c.cy-rc); if(d<bd){bd=d;best=ri;} });
+    c.row = best;
+  });
+
+  // ── WATCH LINE付近の穴数 ──
+  const WY  = PH / 2;
+  const bpx = P.clustGap + 4;
+  const wlHoles = centroids.filter(c => Math.abs(c.cy - WY) <= bpx).length;
+
+  // ── ⑦ ステートマシン ──
+  detectCount(wlHoles);
+
+  // UI更新
+  gHist[gIdx % GHIST] = wlHoles; gIdx++;
+  mHoles.textContent = wlHoles;
+  mRows .textContent = rowCenters.length;
+  mState.textContent = S.phase;
+  const barPct = Math.min(100, wlHoles / Math.max(P.trigHoles*2,1) * 100);
+  topbarIn.style.width      = barPct + '%';
+  topbarIn.style.background = wlHoles >= P.trigHoles ? 'var(--amber)' : 'var(--green)';
+
+  drawOverlay(dw, dh, PW, PH, centroids, rowCenters, WY, bpx);
+  drawGraph(dh);
+}
+
+// ── ステートマシン ──
+function detectCount(wlHoles) {
+  if (S.phase === 'LOCKED') {
+    if (wlHoles <= P.unlockHoles) {
+      S.phase = 'WAIT';
+      wlBar.classList.remove('hit');
+      lockInd.classList.remove('show');
+      sdot.className = 'sdot on';
+    }
+    return;
+  }
+  if (wlHoles >= P.trigHoles) triggerCount();
+}
+
+function triggerCount() {
+  const now = Date.now();
+  if (S.lastCountTime > 0)
+    mIntv.textContent = ((now - S.lastCountTime)/1000).toFixed(1);
+  S.lastCountTime = now;
+  S.count++; cntEl.textContent = S.count;
+  S.phase = 'LOCKED';
+  wlBar.classList.add('hit');
+  lockInd.classList.add('show');
+  sdot.className = 'sdot lock';
+  flashEl.style.opacity = '1';
+  setTimeout(() => flashEl.style.opacity = '0', 120);
+  cntEl.classList.add('bump');
+  setTimeout(() => cntEl.classList.remove('bump'), 200);
+}
+
+// ── オーバーレイ描画 ──
+const ROW_COLORS = [
+  'rgba(255,100,200,.85)', 'rgba(100,220,255,.85)',
+  'rgba(255,220,60,.85)',  'rgba(100,255,150,.85)',
+  'rgba(255,120,80,.85)',  'rgba(180,100,255,.85)',
+];
+function drawOverlay(dw, dh, PW, PH, centroids, rowCenters, WY, bpx) {
+  octx.clearRect(0, 0, dw, dh);
+  const sx = dw/PW, sy = dh/PH;
+
+  // WATCH LINE帯域
+  const cy = dh/2, bp = bpx*sy;
+  octx.fillStyle = 'rgba(0,230,118,.06)';
+  octx.fillRect(0, cy-bp, dw-64, bp*2);
+  octx.strokeStyle = 'rgba(0,230,118,.25)';
+  octx.lineWidth = 1; octx.setLineDash([4,4]);
+  octx.beginPath();
+  octx.moveTo(0,cy-bp); octx.lineTo(dw-64,cy-bp);
+  octx.moveTo(0,cy+bp); octx.lineTo(dw-64,cy+bp);
+  octx.stroke(); octx.setLineDash([]);
+
+  if (!S.showVis) return;
+
+  // ⑥ 段ごとに重心を結ぶ
+  for (let ri = 0; ri < rowCenters.length; ri++) {
+    const col = ROW_COLORS[ri % ROW_COLORS.length];
+    const row = centroids.filter(c => c.row === ri).sort((a,b) => a.cx-b.cx);
+    if (row.length < 2) continue;
+    // 結線
+    octx.strokeStyle = col; octx.lineWidth = 1.2; octx.setLineDash([]);
+    octx.beginPath();
+    octx.moveTo(row[0].cx*sx, row[0].cy*sy);
+    for (let i = 1; i < row.length; i++) octx.lineTo(row[i].cx*sx, row[i].cy*sy);
+    octx.stroke();
+    // 重心点
+    for (const c of row) {
+      const inBand = Math.abs(c.cy - WY) <= bpx;
+      octx.fillStyle   = inBand ? '#ffab00' : col;
+      octx.strokeStyle = 'rgba(255,255,255,.6)';
+      octx.lineWidth   = 1;
+      octx.beginPath();
+      octx.arc(c.cx*sx, c.cy*sy, inBand?5:3.5, 0, Math.PI*2);
+      octx.fill(); octx.stroke();
+    }
+  }
+}
+
+// ── 右端グラフ ──
+function drawGraph(dh) {
+  const pw = 64;
+  gctx.clearRect(0,0,pw,dh);
+  gctx.fillStyle = 'rgba(0,0,0,.65)';
+  gctx.fillRect(0,0,pw,dh);
+  const rowH = dh/GHIST;
+  let maxV = Math.max(P.trigHoles*2, 1);
+  for (let i=0;i<GHIST;i++) if(gHist[i]>maxV) maxV=gHist[i];
+  for (let i=0;i<GHIST;i++) {
+    const idx = (gIdx-GHIST+i+GHIST)%GHIST;
+    const v = gHist[idx];
+    const y = i*rowH;
+    const w = v/maxV*(pw-6);
+    gctx.fillStyle = v >= P.trigHoles ? '#ffab00' : 'rgba(0,230,118,.6)';
+    gctx.fillRect(2, y, w, Math.max(1, rowH-.5));
+  }
+  const tx = P.trigHoles/maxV*(pw-6)+2;
+  gctx.strokeStyle='rgba(255,171,0,.7)';
+  gctx.lineWidth=1; gctx.setLineDash([3,3]);
+  gctx.beginPath(); gctx.moveTo(tx,0); gctx.lineTo(tx,dh); gctx.stroke();
+  gctx.setLineDash([]);
+  gctx.fillStyle='rgba(85,139,94,.9)';
+  gctx.font='9px Courier New';
+  gctx.fillText('WL',2,11); gctx.fillText('HOLES',2,21);
+}
+
+// ── UIイベント ──
+document.getElementById('btn-rst').addEventListener('click', () => {
+  S.count=0; cntEl.textContent='0';
+  S.phase='WAIT'; S.lastCountTime=0;
+  wlBar.classList.remove('hit'); lockInd.classList.remove('show');
+  mIntv.textContent='--';
+  if(S.running) sdot.className='sdot on';
+});
+document.getElementById('btn-m1').addEventListener('click', () => {
+  if(S.count>0){S.count--;cntEl.textContent=S.count;}
+});
+document.getElementById('btn-vis').addEventListener('click', function() {
+  S.showVis=!S.showVis; this.classList.toggle('on',S.showVis);
+});
+document.getElementById('btn-adj').addEventListener('click', () => {
+  document.getElementById('ppanel').classList.toggle('open');
+});
+
+function bindSlider(id,vid,key){
+  const el=document.getElementById(id),vl=document.getElementById(vid);
+  el.addEventListener('input',()=>{ P[key]=+el.value; vl.textContent=el.value; });
+}
+bindSlider('p-hmin','v-hmin','hMin');
+bindSlider('p-hmax','v-hmax','hMax');
+bindSlider('p-smin','v-smin','sMin');
+bindSlider('p-amin','v-amin','aMin');
+bindSlider('p-gap', 'v-gap', 'clustGap');
+bindSlider('p-trig','v-trig','trigHoles');
+bindSlider('p-unlk','v-unlk','unlockHoles');
+</script>
+</body>
+</html>
+HTMLEOF
+echo "done"
