@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -318,7 +317,9 @@ function loop(ts) {
 
   // ── ③ 重心計算・サイズフィルタ ──
   const sizes = [...cntMap.values()].sort((a,b)=>b-a);
-  const med   = sizes[Math.min(9, sizes.length-1)] || 1;
+  const med   = sizes.length
+      ? sizes[Math.min(9, sizes.length-1)]
+      : 1;
   const aMin  = Math.max(P.aMin, Math.floor(med * 0.08));
   const aMax  = Math.min(5000,   Math.ceil (med * 12));
 
@@ -355,10 +356,80 @@ function loop(ts) {
     c.row = best;
   });
 
+// ==========================================
+// 本物の段だけ選別
+// ==========================================
+
+const validRows = [];
+
+for (let ri = 0; ri < rowCenters.length; ri++) {
+
+  const row =
+    centroids
+      .filter(c => c.row === ri)
+      .sort((a,b) => a.cx - b.cx);
+
+  if (row.length < P.trigHoles)
+    continue;
+
+  const span =
+    row[row.length - 1].cx -
+    row[0].cx;
+
+  if (span < PW * 0.45)
+    continue;
+
+  if (row.length >= 4) {
+
+    const gaps = [];
+
+    for (let i = 1; i < row.length; i++) {
+      gaps.push(
+        row[i].cx -
+        row[i - 1].cx
+      );
+    }
+
+    const mean =
+      gaps.reduce((a,b)=>a+b,0) /
+      gaps.length;
+
+    const variance =
+      gaps.reduce(
+        (a,b)=>a+(b-mean)*(b-mean),
+        0
+      ) / gaps.length;
+
+    const cv =
+      Math.sqrt(variance) /
+      Math.max(mean,1);
+
+    if (cv > 0.45)
+      continue;
+  }
+
+  validRows.push({
+    rowIndex : ri,
+    points   : row,
+    centerY  : rowCenters[ri],
+    holeCount: row.length
+  });
+}
+
   // ── WATCH LINE付近の穴数 ──
   const WY  = PH / 2;
   const bpx = P.clustGap + 4;
-  const wlHoles = centroids.filter(c => Math.abs(c.cy - WY) <= bpx).length;
+  let wlHoles = 0;
+
+  for (const row of validRows) {
+
+    if (Math.abs(row.centerY - WY) <= bpx) {
+      wlHoles = Math.max(
+       wlHoles,
+       row.holeCount
+      );
+    }
+  }
 
   // ── ⑦ ステートマシン ──
   detectCount(wlHoles);
@@ -366,13 +437,13 @@ function loop(ts) {
   // UI更新
   gHist[gIdx % GHIST] = wlHoles; gIdx++;
   mHoles.textContent = wlHoles;
-  mRows .textContent = rowCenters.length;
+  mRows.textContent = validRows.length;
   mState.textContent = S.phase;
   const barPct = Math.min(100, wlHoles / Math.max(P.trigHoles*2,1) * 100);
   topbarIn.style.width      = barPct + '%';
   topbarIn.style.background = wlHoles >= P.trigHoles ? 'var(--amber)' : 'var(--green)';
 
-  drawOverlay(dw, dh, PW, PH, centroids, rowCenters, WY, bpx);
+  drawOverlay(dw, dh, PW, PH, validRows, WY, bpx);
   drawGraph(dh);
 }
 
@@ -412,7 +483,7 @@ const ROW_COLORS = [
   'rgba(255,220,60,.85)',  'rgba(100,255,150,.85)',
   'rgba(255,120,80,.85)',  'rgba(180,100,255,.85)',
 ];
-function drawOverlay(dw, dh, PW, PH, centroids, rowCenters, WY, bpx) {
+function drawOverlay(dw, dh, PW, PH, validRows, WY, bpx) {
   octx.clearRect(0, 0, dw, dh);
   const sx = dw/PW, sy = dh/PH;
 
@@ -430,9 +501,10 @@ function drawOverlay(dw, dh, PW, PH, centroids, rowCenters, WY, bpx) {
   if (!S.showVis) return;
 
   // ⑥ 段ごとに重心を結ぶ
-  for (let ri = 0; ri < rowCenters.length; ri++) {
+  for (let ri = 0; ri < validRows.length; ri++) {
+    const rowData = validRows[ri];
+    const row = rowData.points;
     const col = ROW_COLORS[ri % ROW_COLORS.length];
-    const row = centroids.filter(c => c.row === ri).sort((a,b) => a.cx-b.cx);
     if (row.length < 2) continue;
     // 結線
     octx.strokeStyle = col; octx.lineWidth = 1.2; octx.setLineDash([]);
